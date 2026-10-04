@@ -50,6 +50,15 @@ export interface SparksConfig {
   min_active_verifiers: number;
 }
 
+/** Stage B (graph) and Stage C (GNN) gates. Read by ml/*.py; pal-core only validates. */
+export interface MlConfig {
+  graph_min_nodes: number;
+  graph_min_communities: number;
+  graph_min_closed_verified_sparks: number;
+  max_brokers: number;
+  stage_c_min_closed_sparks: number;
+}
+
 export interface InstanceConfig {
   id: string;
   country: string;
@@ -81,6 +90,7 @@ export interface PalConfig {
   };
   sparks: SparksConfig;
   fairness: { max_median_gap: number };
+  ml: MlConfig;
   sectors: string[];
   levers: string[];
   instances: InstanceConfig[];
@@ -137,6 +147,13 @@ export const DEFAULT_SETTINGS: Omit<PalConfig, 'instances'> = {
   extraction: { validated_languages: ['en'], unvalidated_language_weight: 0.5, max_value_length: 160 },
   sparks: { durations_days: [7, 14, 30], funding_cap: null, value_split_defaults: null, min_active_verifiers: 1 },
   fairness: { max_median_gap: 15 },
+  ml: {
+    graph_min_nodes: 30,
+    graph_min_communities: 2,
+    graph_min_closed_verified_sparks: 1,
+    max_brokers: 10,
+    stage_c_min_closed_sparks: 150,
+  },
   sectors: ['agriculture', 'health', 'education', 'finance', 'energy', 'waste_climate'],
   levers: ['energy', 'education', 'media', 'data', 'design', 'digital'],
 };
@@ -357,6 +374,7 @@ const SECTION_KEYS = [
   'extraction',
   'sparks',
   'fairness',
+  'ml',
   'sectors',
   'levers',
 ] as const;
@@ -380,6 +398,15 @@ function checkSections(c: Checker, o: Obj, path: string): Omit<PalConfig, 'insta
   c.noExtraKeys(ext, `${path}.extraction`, ['validated_languages', 'unvalidated_language_weight', 'max_value_length']);
   const fair = c.obj(o['fairness'], `${path}.fairness`);
   c.noExtraKeys(fair, `${path}.fairness`, ['max_median_gap']);
+  const ml = c.obj(o['ml'], `${path}.ml`);
+  c.noExtraKeys(ml, `${path}.ml`, [
+    'graph_min_nodes',
+    'graph_min_communities',
+    'graph_min_closed_verified_sparks',
+    'max_brokers',
+    'stage_c_min_closed_sparks',
+  ]);
+  const posInt = (v: unknown, k: string) => c.num(v, `${path}.ml.${k}`, { int: true, min: 1 });
 
   const k_min = c.num(priv['k_min'], `${path}.privacy.k_min`, { int: true, min: 2 });
   return {
@@ -421,6 +448,13 @@ function checkSections(c: Checker, o: Obj, path: string): Omit<PalConfig, 'insta
     },
     sparks: checkSparks(c, o['sparks'], `${path}.sparks`),
     fairness: { max_median_gap: c.num(fair['max_median_gap'], `${path}.fairness.max_median_gap`, { gt: 0 }) },
+    ml: {
+      graph_min_nodes: posInt(ml['graph_min_nodes'], 'graph_min_nodes'),
+      graph_min_communities: posInt(ml['graph_min_communities'], 'graph_min_communities'),
+      graph_min_closed_verified_sparks: posInt(ml['graph_min_closed_verified_sparks'], 'graph_min_closed_verified_sparks'),
+      max_brokers: posInt(ml['max_brokers'], 'max_brokers'),
+      stage_c_min_closed_sparks: posInt(ml['stage_c_min_closed_sparks'], 'stage_c_min_closed_sparks'),
+    },
     sectors: c.strList(o['sectors'], `${path}.sectors`, SLUG),
     levers: c.strList(o['levers'], `${path}.levers`, SLUG),
   };

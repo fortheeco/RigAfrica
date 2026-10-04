@@ -57,6 +57,13 @@ sparks:
 fairness:
   max_median_gap: 15
 
+ml:                               # Stage B graph gate and Stage C switch-on threshold (ml/*.py)
+  graph_min_nodes: 30             # connected graph large enough to show clusters
+  graph_min_communities: 2
+  graph_min_closed_verified_sparks: 1
+  max_brokers: 10
+  stage_c_min_closed_sparks: 150  # spec: GNN only after 150-200 closed Sparks in a city
+
 sectors: [agriculture, health, education, finance, energy, waste_climate]
 levers: [energy, education, media, data, design, digital]
 
