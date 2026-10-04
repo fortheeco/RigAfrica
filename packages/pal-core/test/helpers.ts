@@ -1,5 +1,5 @@
 // Shared test fixtures. Instance ids here are synthetic on purpose: core code must not care.
-import { DEFAULT_CONFIG, resolveInstanceConfig } from '../src/config.ts';
+import { DEFAULT_SETTINGS, resolveInstanceConfig } from '../src/config.ts';
 import type { PalConfig, ResolvedConfig } from '../src/config.ts';
 import type { VerifiedEvidence } from '../src/scoring.ts';
 
@@ -7,7 +7,7 @@ export const NOW = '2026-10-01T00:00:00.000Z';
 
 export function testConfig(over: Partial<PalConfig> = {}): PalConfig {
   return {
-    ...structuredClone(DEFAULT_CONFIG),
+    ...structuredClone(DEFAULT_SETTINGS),
     instances: [
       { id: 'alpha', country: 'ZZ', place_type: 'district', currency: 'XXX', languages: ['en'], regulator: 'TEST' },
     ],

@@ -91,7 +91,11 @@ export interface ResolvedConfig extends Omit<PalConfig, 'instances'> {
   instance: Omit<InstanceConfig, 'overrides'>;
 }
 
-export const DEFAULT_CONFIG: PalConfig = {
+/**
+ * Default settings (mirrors config/pal.config.yaml without `instances`). Instances are data and
+ * exist only in configuration, never in code.
+ */
+export const DEFAULT_SETTINGS: Omit<PalConfig, 'instances'> = {
   model_version: 'pal-core@0.1.0',
   scoring: {
     half_life_months: 18,
@@ -135,10 +139,6 @@ export const DEFAULT_CONFIG: PalConfig = {
   fairness: { max_median_gap: 15 },
   sectors: ['agriculture', 'health', 'education', 'finance', 'energy', 'waste_climate'],
   levers: ['energy', 'education', 'media', 'data', 'design', 'digital'],
-  instances: [
-    { id: 'lagos', country: 'NG', place_type: 'lga', currency: 'NGN', languages: ['en', 'pcm', 'yo'], regulator: 'NDPC' },
-    { id: 'kenya', country: 'KE', place_type: 'county', currency: 'KES', languages: ['en', 'sw'], regulator: 'ODPC' },
-  ],
 };
 
 // ---------------------------------------------------------------------------
