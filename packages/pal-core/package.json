@@ -1,0 +1,21 @@
+{
+  "name": "@eco/pal-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PAL Engine core: pure scoring, readiness, matching, extraction-schema and privacy functions. No I/O. Runs in Deno and Node.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "npm run typecheck && node scripts/lint.ts",
+    "test": "node --test test/*.test.ts",
+    "check": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.3",
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,0 +1,21 @@
+# PAL Engine: decision log
+
+Every judgment call made while building PAL Engine, newest at the bottom. "Spec" means the
+Claude Code build prompt; "TBD" means the reference "Technical Build Document".
+
+| id | decision | why | revisit when |
+|----|----------|-----|--------------|
+| D-001 | **Built in `fortheeco/RigAfrica` on `claude/pal-engine-backend-tluaxv`, not in the ECO platform repo.** Only schema-independent parts are built: `packages/pal-core`, `config/`, `eval/`, `ml/`, `docs/`. No migrations and no edge functions yet. | RigAfrica is a 2023 static site plus a Django branch and has no ECO tables. The Lovable-synced repo `fortheeco/eco-civic-console` could not be attached: the session's GitHub credential has no access to it. Spec §9 says STOP for schema-dependent work. | Access to `eco-civic-console` is granted. The directories are self-contained and move across unchanged. |
+| D-002 | Tests use `node:test` with Node ≥22.18 built-in type stripping. `pal-core` has **zero runtime dependencies**. Imports use explicit `.ts` extensions. | One implementation runs unchanged in Node (tests, eval) and Deno (edge functions). `erasableSyntaxOnly` is on, so there are no enums or namespaces. | — |
+| D-003 | TypeScript pinned to `~5.9.3`, not 7.x. | 7.x is the native-compiler rewrite and some flags changed. Stability first. | When eco-civic-console's toolchain moves. |
+| D-004 | Age in months = ms / 2 629 800 000 (365.25/12 days). | It's an integer, so an event dated exactly N months back has age exactly N. That makes the 18-month half-life test exact rather than approximate. | civic_score uses a different month definition (unverified: civic_score code not visible). |
+| D-005 | C uses a **weighted** count of distinct claimed items. Unvalidated-language items weigh `unvalidated_language_weight` (0.5). | Spec §5.4 says to multiply weight by 0.5, and C is the only place a claimed weight enters. | — |
+| D-006 | Claimed items with no `axis_hint` or no sector don't count toward any C. They still feed matching text (offers/needs). | C is defined per axis and sector. Guessing an axis would be inference beyond the evidence. | — |
+| D-007 | `extraction.validated_languages` defaults to `[en]`. | The spec names sw, pcm and yo as unvalidated, and English is the baseline. The eval language gate controls promotion. | The first language-gate run. |
+| D-008 | Rising baseline = latest `pal_profile_history` snapshot at or before now−90d. **If there's none, V is recomputed as of now−90d from evidence.** | Without the fallback nobody can be Rising during a place's first 90 days. The as-of value is exact because evidence is timestamped. | — |
+| D-009 | State is computed per (sector, axis). Readiness filters "not Dormant" using the state of the counted role's axis. | The API exposes state "per sector and axis" (spec §7). | — |
+| D-010 | At most two roles per sector (primary plus one). | The spec says "a second role is added". | — |
+| D-011 | Added `matching.candidates_per_role` (15): shortlist per role before enumerating trios. | Bounds trio enumeration to 15³. | — |
+| D-012 | The config validator is strict: unknown keys are rejected, `verification_multiplier.unverified` must be 0, `purge_days` ≤ 30, matching weights sum to 1, and instance overrides are validated after merging. | The stingy and purge rules can't be configured away, and typos can't silently fall back to defaults. | — |
+| D-013 | Events dated after `now` are ignored. `quality` is clamped to [0,1]; null quality = 1.0. | The spec defaults to 1.0 when the field is missing. | — |
+| D-014 | Added config keys not listed in spec §4: `model_version`, `extraction.*`, `sparks.min_active_verifiers` (1), `fairness.max_median_gap` (15). | Each value comes from the spec text. This keeps them tunable rather than hardcoded. | — |
