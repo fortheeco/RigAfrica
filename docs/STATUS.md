@@ -1,5 +1,10 @@
 # PAL Engine: build status
 
+> **Moved.** PAL Engine now lives in `fortheeco/the-eco-platform-c31b6a33` (the Lovable-synced ECO
+> Platform), on branch `claude/pal-engine-backend-tluaxv`, with migrations, edge functions and
+> platform-schema adaptations. That repo's `docs/pal/STATUS.md` is the current status. This branch
+> keeps the history of the pre-port work only.
+
 _Phase 1 (Stage A) is partially built. Phase 2 (Stage B) scaffold is built. Phase 3 is data
 accumulation only._
 
