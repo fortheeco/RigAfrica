@@ -1,0 +1,959 @@
+openapi: 3.1.0
+info:
+  title: PAL Engine API
+  version: 0.1.0
+  license: { name: Proprietary, identifier: LicenseRef-ECO-Proprietary }
+  description: |
+    Scoring, map, matching and consent API of the ECO Platform's PAL Engine. Served by the single
+    `pal-api` edge function. Consumed by the Lovable UI and by scoped ECO apps.
+
+    **Rules the UI can rely on**
+    - `verified` (V) and `claimed` (C) are always returned separately. A claimed value is never
+      labelled verified. `match` (B = V + 0.4·C) is only for ranking.
+    - Map responses never include a count below `k_min`. Small counts come back as
+      `{ "kind": "band", "band": "fewer than 10", "lt": 10 }`. There are no cross-cell totals.
+    - Every list endpoint is cursor-paginated (`cursor`, `limit`) and returns `next_cursor`.
+    - Errors are typed JSON with a stable `error.code` (see `ErrorCode`).
+    - Rate limits apply per API key or session. Responses carry `RateLimit-*` headers, and a 429
+      response includes `Retry-After`.
+    - Any profile view by someone other than the owner is written to the access log.
+servers:
+  - url: https://{project}.supabase.co/functions/v1/pal-api
+    variables:
+      project: { default: your-project-ref }
+security:
+  - ecoSession: []
+  - appApiKey: []
+tags:
+  - { name: me, description: The signed-in person's own PAL data }
+  - { name: map, description: Aggregate readiness map (k-anonymous) }
+  - { name: sparks, description: 'Spark briefs, matching and lifecycle' }
+  - { name: admin, description: Instance configuration and oversight (admin / steward) }
+
+paths:
+  /me/profile:
+    get:
+      tags: [me]
+      operationId: getMyProfile
+      summary: V, C, confidence, roles and state per sector and axis, plus evidence lines
+      x-pal-scopes: [profile:read:self]
+      parameters: [{ $ref: '#/components/parameters/Instance' }]
+      responses:
+        '200': { description: Profile, content: { application/json: { schema: { $ref: '#/components/schemas/Profile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me/evidence/{id}/dispute:
+    post:
+      tags: [me]
+      operationId: disputeEvidence
+      summary: Dispute one evidence line; it is frozen (excluded from scoring) until resolved
+      x-pal-scopes: [profile:write:self]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: Stable evidence-line id }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [not_me, incorrect, outdated, wrong_sector, wrong_axis, other] }
+                note: { type: string, maxLength: 500, description: Stored for the reviewer; never used for scoring }
+      responses:
+        '201': { description: Dispute opened, content: { application/json: { schema: { $ref: '#/components/schemas/Dispute' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me/consents:
+    get:
+      tags: [me]
+      operationId: listMyConsents
+      summary: List my consents per source
+      x-pal-scopes: [consent:read:self]
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200':
+          description: Consents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Consent' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [me]
+      operationId: grantConsent
+      summary: Start connecting a source (OAuth or export upload) and get a handle-proof challenge if needed
+      description: |
+        Only official OAuth/API or user-uploaded exports are supported. No scraping, and no lookup of
+        arbitrary usernames. A social source needs handle ownership proof before anything is
+        ingested: OAuth completion, or the one-time `bio_code` placed in the public bio.
+      x-pal-scopes: [consent:write:self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, method, scopes]
+              additionalProperties: false
+              properties:
+                source: { type: string, example: linkedin }
+                method: { $ref: '#/components/schemas/ConsentMethod' }
+                scopes: { type: array, items: { type: string }, minItems: 1 }
+                redirect_uri: { type: string, format: uri, description: Required for `oauth` }
+      responses:
+        '201': { description: Connection started, content: { application/json: { schema: { $ref: '#/components/schemas/ConsentStart' } } } }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me/consents/{source}:
+    delete:
+      tags: [me]
+      operationId: revokeConsent
+      summary: Revoke a source. Ingest stops at once; derived features are purged within purge_days, then the profile is recomputed
+      x-pal-scopes: [consent:write:self]
+      parameters: [{ name: source, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Revoked, content: { application/json: { schema: { $ref: '#/components/schemas/Revocation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me/learned:
+    get:
+      tags: [me]
+      operationId: listLearned
+      summary: Every derived feature and its source reference (never raw content)
+      x-pal-scopes: [profile:read:self]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - { name: source, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Learned features
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/LearnedFeature' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me/export:
+    get:
+      tags: [me]
+      operationId: exportMe
+      summary: Full PAL data export as JSON
+      x-pal-scopes: [profile:read:self]
+      responses:
+        '200': { description: Export, content: { application/json: { schema: { $ref: '#/components/schemas/Export' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /me:
+    delete:
+      tags: [me]
+      operationId: deleteMe
+      summary: Delete profile, signals, edges and consents. A minimal non-identifying tombstone is kept for audit
+      x-pal-scopes: [profile:write:self]
+      responses:
+        '202': { description: Deletion accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Deletion' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /map:
+    get:
+      tags: [map]
+      operationId: getMap
+      summary: Triad Readiness by place and sector. Bands under k_min, uncertainty, no cross-cell totals
+      x-pal-scopes: [map:read]
+      parameters:
+        - { $ref: '#/components/parameters/InstanceRequired' }
+        - { name: sector, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Map cells
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    required: [k_min, computed_at]
+                    properties:
+                      k_min: { type: integer }
+                      computed_at: { type: string, format: date-time }
+                      data: { type: array, items: { $ref: '#/components/schemas/MapCell' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /map/gaps:
+    get:
+      tags: [map]
+      operationId: getGaps
+      summary: Missing roles, blocked Sparks and a suggested brief for one place and sector
+      x-pal-scopes: [map:read]
+      parameters:
+        - { name: place, in: query, required: true, schema: { type: string } }
+        - { name: sector, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Gap, content: { application/json: { schema: { $ref: '#/components/schemas/Gap' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /map/brokers:
+    get:
+      tags: [map]
+      operationId: getBrokers
+      summary: Steward-only. Consent-filtered brokers for a place (Stage B; 409 until the place passes the graph gate)
+      x-pal-scopes: [map:brokers]
+      x-pal-roles: [steward, admin]
+      parameters:
+        - { name: place, in: query, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Brokers (each view is access-logged)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Broker' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks:
+    get:
+      tags: [sparks]
+      operationId: listSparks
+      summary: List Sparks by place and status
+      x-pal-scopes: [sparks:read]
+      parameters:
+        - { name: place, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/SparkStatus' } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Sparks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Spark' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [sparks]
+      operationId: createSpark
+      summary: Create a draft Spark. Funded drafts are refused while the instance funding_cap is null
+      x-pal-scopes: [sparks:write]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SparkCreate' } } }
+      responses:
+        '201': { description: Draft created, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/approve:
+    post:
+      tags: [sparks]
+      operationId: approveSpark
+      summary: Steward approval (required before any invite). Locks the value split for funded Sparks
+      x-pal-scopes: [sparks:approve]
+      x-pal-roles: [steward, admin]
+      parameters: [{ $ref: '#/components/parameters/SparkId' }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/matches:
+    get:
+      tags: [sparks]
+      operationId: listMatches
+      summary: Proposed trios (one Partner, one Ambassador, one Leader) with per-member explanations
+      x-pal-scopes: [sparks:match]
+      x-pal-roles: [steward, admin]
+      parameters: [{ $ref: '#/components/parameters/SparkId' }]
+      responses:
+        '200': { description: Matches, content: { application/json: { schema: { $ref: '#/components/schemas/MatchResult' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/matches/{m}/invite:
+    post:
+      tags: [sparks]
+      operationId: inviteMatch
+      summary: Invite the members of trio `m`. Refused unless the Spark is steward-approved
+      x-pal-scopes: [sparks:approve]
+      x-pal-roles: [steward, admin]
+      parameters:
+        - $ref: '#/components/parameters/SparkId'
+        - { name: m, in: path, required: true, schema: { type: integer, minimum: 1 }, description: Trio rank }
+      responses:
+        '200': { description: Invites sent, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/accept:
+    post:
+      tags: [sparks]
+      operationId: acceptSpark
+      summary: An invited member accepts their role
+      x-pal-scopes: [sparks:respond:self]
+      parameters: [{ $ref: '#/components/parameters/SparkId' }]
+      responses:
+        '200': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/decline:
+    post:
+      tags: [sparks]
+      operationId: declineSpark
+      summary: An invited member declines their role
+      x-pal-scopes: [sparks:respond:self]
+      parameters: [{ $ref: '#/components/parameters/SparkId' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [unavailable, conflict, not_interested, other] }
+      responses:
+        '200': { description: Declined, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /sparks/{id}/settle:
+    post:
+      tags: [sparks]
+      operationId: settleSpark
+      summary: Trigger the existing milestone-gated release. PAL never moves money itself
+      x-pal-scopes: [sparks:settle]
+      x-pal-roles: [steward, admin]
+      parameters: [{ $ref: '#/components/parameters/SparkId' }]
+      responses:
+        '202': { description: Settlement requested, content: { application/json: { schema: { $ref: '#/components/schemas/Spark' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/config:
+    get:
+      tags: [admin]
+      operationId: getConfig
+      summary: Effective configuration for an instance
+      x-pal-scopes: [admin:config]
+      x-pal-roles: [admin]
+      parameters: [{ $ref: '#/components/parameters/InstanceRequired' }]
+      responses:
+        '200': { description: Effective config for the instance, content: { application/json: { schema: { $ref: '#/components/schemas/InstanceConfigDoc' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [admin]
+      operationId: putConfig
+      summary: Replace the instance overrides. Validated against the config schema (pal-core validateConfig); unknown keys rejected
+      x-pal-scopes: [admin:config]
+      x-pal-roles: [admin]
+      parameters: [{ $ref: '#/components/parameters/InstanceRequired' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [overrides, expected_version]
+              properties:
+                overrides: { type: object, additionalProperties: true }
+                expected_version: { type: integer, description: Optimistic concurrency }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/InstanceConfigDoc' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/fairness:
+    get:
+      tags: [admin]
+      operationId: getFairness
+      summary: Latest fairness audit report (eval harness output)
+      x-pal-scopes: [admin:fairness]
+      x-pal-roles: [admin, steward]
+      parameters: [{ $ref: '#/components/parameters/InstanceRequired' }]
+      responses:
+        '200': { description: Report, content: { application/json: { schema: { $ref: '#/components/schemas/FairnessReport' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/disputes:
+    get:
+      tags: [admin]
+      operationId: listDisputes
+      summary: Disputes awaiting or past review
+      x-pal-scopes: [admin:disputes]
+      x-pal-roles: [admin, steward]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, upheld, rejected] } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Disputes (each subject view is access-logged)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/Dispute' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /admin/access-log:
+    get:
+      tags: [admin]
+      operationId: listAccessLog
+      summary: Who viewed whose profile, and why
+      x-pal-scopes: [admin:audit]
+      x-pal-roles: [admin]
+      parameters:
+        - { name: subject, in: query, schema: { type: string }, description: Person id }
+        - { name: viewer, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Access log
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties: { data: { type: array, items: { $ref: '#/components/schemas/AccessLogEntry' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    ecoSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: ECO ID session (Supabase auth JWT)
+    appApiKey:
+      type: apiKey
+      in: header
+      name: x-eco-app-key
+      description: Scoped key from app_api_keys. The key's scopes must include the operation's x-pal-scopes
+
+  parameters:
+    Instance: { name: instance, in: query, schema: { type: string }, description: Instance id from config; defaults to the person's home instance }
+    InstanceRequired: { name: instance, in: query, required: true, schema: { type: string } }
+    Cursor: { name: cursor, in: query, schema: { type: string }, description: Opaque cursor from next_cursor }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+    SparkId: { name: id, in: path, required: true, schema: { type: string } }
+
+  headers:
+    RateLimit-Limit: { schema: { type: integer } }
+    RateLimit-Remaining: { schema: { type: integer } }
+    RateLimit-Reset: { schema: { type: integer }, description: Seconds until the window resets }
+
+  responses:
+    Unauthorized:
+      description: No valid ECO session or app key
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RateLimited:
+      description: Rate limit exceeded for this key or session
+      headers:
+        Retry-After: { schema: { type: integer } }
+        RateLimit-Limit: { $ref: '#/components/headers/RateLimit-Limit' }
+        RateLimit-Remaining: { $ref: '#/components/headers/RateLimit-Remaining' }
+        RateLimit-Reset: { $ref: '#/components/headers/RateLimit-Reset' }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Error:
+      description: Typed error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Missing role or scope
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: State conflict (e.g. gate not satisfied, version mismatch)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Invalid:
+      description: Validation failed
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: Stable machine-readable codes. New codes may be added; existing ones never change meaning.
+      enum:
+        - unauthenticated
+        - forbidden
+        - scope_missing
+        - not_found
+        - invalid_request
+        - rate_limited
+        - unknown_instance
+        - unknown_target_profile
+        - config_invalid
+        - version_conflict
+        - no_consent
+        - consent_revoked
+        - handle_unverified
+        - dispute_exists
+        - invalid_duration
+        - unknown_sector
+        - funding_cap_unset
+        - amount_required
+        - over_funding_cap
+        - value_split_missing
+        - value_split_invalid
+        - no_active_verifier
+        - not_steward_approved
+        - split_not_locked
+        - trio_incomplete
+        - invalid_transition
+        - stage_not_enabled
+        - internal
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            details: { type: array, items: { type: object, properties: { path: { type: string }, message: { type: string }, code: { type: string } } } }
+        request_id: { type: string }
+
+    Page:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data: { type: array, items: {} }
+        next_cursor: { type: [string, 'null'] }
+
+    Axis: { type: string, enum: [capital, vision, execution] }
+    RoleLabel: { type: string, enum: [Partner, Ambassador, Leader] }
+    PersonState: { type: string, enum: [Rising, Established, Dormant, Unverified, Emerging] }
+    VerificationLevel: { type: string, enum: [unverified, verified, corroborated, claimed] }
+
+    AxisScore:
+      type: object
+      required: [verified, claimed, match, confidence, state]
+      properties:
+        verified: { type: number, minimum: 0, maximum: 100, description: 'V: verified/corroborated ECO evidence only' }
+        claimed: { type: number, minimum: 0, maximum: 25, description: 'C: self-declared/social-derived. Never verified.' }
+        match: { type: number, minimum: 0, maximum: 100, description: 'B = min(100, V + 0.4·C), ranking only' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        state: { $ref: '#/components/schemas/PersonState' }
+        distinct_evidence_types: { type: integer }
+        distinct_verifiers: { type: integer }
+
+    SectorProfile:
+      type: object
+      required: [sector, axes, roles]
+      properties:
+        sector: { type: string }
+        axes:
+          type: object
+          required: [capital, vision, execution]
+          properties:
+            capital: { $ref: '#/components/schemas/AxisScore' }
+            vision: { $ref: '#/components/schemas/AxisScore' }
+            execution: { $ref: '#/components/schemas/AxisScore' }
+        roles:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            required: [axis, label, primary]
+            properties:
+              axis: { $ref: '#/components/schemas/Axis' }
+              label: { $ref: '#/components/schemas/RoleLabel' }
+              primary: { type: boolean }
+
+    EvidenceLine:
+      type: object
+      required: [id, kind, type, verification_level, status, points, source_ref]
+      properties:
+        id: { type: string, description: 'Stable id; use with POST /me/evidence/{id}/dispute' }
+        kind: { type: string, enum: [verified, claimed] }
+        axis: { oneOf: [{ $ref: '#/components/schemas/Axis' }, { type: 'null' }] }
+        sector: { type: [string, 'null'] }
+        type: { type: string }
+        verification_level: { $ref: '#/components/schemas/VerificationLevel' }
+        status: { type: string, enum: [counted, frozen, not_verified, no_weight, duplicate, unscoped] }
+        points: { type: number }
+        source_ref: { type: string }
+        occurred_at: { type: [string, 'null'], format: date-time }
+
+    Profile:
+      type: object
+      required: [person_id, model_version, computed_at, sectors, evidence_lines]
+      properties:
+        person_id: { type: string }
+        model_version: { type: string }
+        computed_at: { type: string, format: date-time }
+        sectors: { type: array, items: { $ref: '#/components/schemas/SectorProfile' } }
+        evidence_lines: { type: array, items: { $ref: '#/components/schemas/EvidenceLine' } }
+
+    Dispute:
+      type: object
+      required: [id, evidence_id, status, reason, opened_at]
+      properties:
+        id: { type: string }
+        person_id: { type: string, description: Present for admin/steward views only }
+        evidence_id: { type: string }
+        status: { type: string, enum: [open, upheld, rejected] }
+        reason: { type: string }
+        opened_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+
+    ConsentMethod: { type: string, enum: [oauth, export_upload, self_declared, contacts_upload] }
+    Consent:
+      type: object
+      required: [source, method, scopes, granted_at, revoked_at, handle_verified]
+      properties:
+        source: { type: string }
+        method: { $ref: '#/components/schemas/ConsentMethod' }
+        scopes: { type: array, items: { type: string } }
+        granted_at: { type: string, format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        handle_verified: { type: boolean }
+        purge_due_at: { type: [string, 'null'], format: date-time }
+    ConsentStart:
+      type: object
+      required: [source, method, status]
+      properties:
+        source: { type: string }
+        method: { $ref: '#/components/schemas/ConsentMethod' }
+        status: { type: string, enum: [pending_oauth, pending_upload, pending_handle_proof, active] }
+        oauth_url: { type: [string, 'null'], format: uri }
+        upload_url: { type: [string, 'null'], format: uri, description: 'Signed, single-use, short-lived' }
+        bio_code: { type: [string, 'null'], example: ECO-7KQ2MZ4P }
+        bio_code_expires_at: { type: [string, 'null'], format: date-time }
+    Revocation:
+      type: object
+      required: [source, revoked_at, purge_due_at]
+      properties:
+        source: { type: string }
+        revoked_at: { type: string, format: date-time }
+        purge_due_at: { type: string, format: date-time }
+
+    LearnedFeature:
+      type: object
+      required: [id, source, feature_type, value, evidence_ref, confidence, status, language]
+      properties:
+        id: { type: string }
+        source: { type: string }
+        feature_type: { type: string, enum: [sector_interest, affiliation, community_role, offer, need, purpose] }
+        sector: { type: [string, 'null'] }
+        axis: { oneOf: [{ $ref: '#/components/schemas/Axis' }, { type: 'null' }] }
+        value: { type: string, maxLength: 160 }
+        evidence_ref: { type: string }
+        confidence: { type: number }
+        status: { type: string, enum: [claimed] }
+        weight: { type: number }
+        language: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Export:
+      type: object
+      required: [exported_at, profile, learned, consents, disputes, history]
+      properties:
+        exported_at: { type: string, format: date-time }
+        profile: { $ref: '#/components/schemas/Profile' }
+        learned: { type: array, items: { $ref: '#/components/schemas/LearnedFeature' } }
+        consents: { type: array, items: { $ref: '#/components/schemas/Consent' } }
+        disputes: { type: array, items: { $ref: '#/components/schemas/Dispute' } }
+        history: { type: array, items: { type: object } }
+        edges: { type: array, items: { type: object }, description: The person's own graph edges }
+        spark_participation: { type: array, items: { type: object } }
+    Deletion:
+      type: object
+      required: [status, tombstone_id]
+      properties:
+        status: { type: string, enum: [accepted] }
+        tombstone_id: { type: string }
+
+    BandedCount:
+      oneOf:
+        - type: object
+          required: [kind, value]
+          properties: { kind: { const: count }, value: { type: integer, description: 'Always >= k_min' } }
+        - type: object
+          required: [kind, band, lt]
+          properties: { kind: { const: band }, band: { type: string, example: fewer than 10 }, lt: { type: integer } }
+
+    MapCell:
+      type: object
+      required: [place_id, place_name, sector, role_counts, tr, tr_band, uncertainty, low_population, missing_roles, blocked_sparks, model_version]
+      properties:
+        place_id: { type: string }
+        place_name: { type: string }
+        sector: { type: string }
+        role_counts:
+          type: object
+          required: [partner, ambassador, leader]
+          properties:
+            partner: { $ref: '#/components/schemas/BandedCount' }
+            ambassador: { $ref: '#/components/schemas/BandedCount' }
+            leader: { $ref: '#/components/schemas/BandedCount' }
+        tr: { type: [number, 'null'], description: Exact Triad Readiness (0-100) only when every role count is >= k_min }
+        tr_band: { type: [string, 'null'], enum: ['0-25', '25-50', '50-75', '75-100', null] }
+        uncertainty: { type: [number, 'null'] }
+        low_population: { type: boolean }
+        missing_roles: { type: array, items: { $ref: '#/components/schemas/RoleLabel' }, description: 'Ranked by gap, largest first' }
+        blocked_sparks:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { $ref: '#/components/schemas/RoleLabel' }
+              spark_ids: { type: array, items: { type: string } }
+        model_version: { type: string }
+
+    Gap:
+      type: object
+      required: [cell, suggested_brief]
+      properties:
+        cell: { $ref: '#/components/schemas/MapCell' }
+        structural_holes:
+          type: array
+          description: Stage B only. Aggregate descriptions, no person ids
+          items: { type: object, properties: { kind: { type: string }, description: { type: string } } }
+        suggested_brief:
+          type: [object, 'null']
+          properties:
+            title: { type: string }
+            text: { type: string }
+            duration_days: { type: integer }
+            generator: { type: string, enum: [civic_llm, template] }
+
+    Broker:
+      type: object
+      required: [person_id, betweenness, communities_bridged]
+      properties:
+        person_id: { type: string }
+        display_name: { type: string }
+        betweenness: { type: number }
+        communities_bridged: { type: integer }
+
+    SparkStatus: { type: string, enum: [draft, approved, inviting, open, active, settling, closed, cancelled] }
+    SparkCreate:
+      type: object
+      required: [instance, place_id, sector, duration_days, funded]
+      additionalProperties: false
+      properties:
+        instance: { type: string }
+        place_id: { type: string }
+        sector: { type: string }
+        duration_days: { type: integer, description: One of config sparks.durations_days }
+        title: { type: string, maxLength: 120 }
+        brief: { type: string, maxLength: 4000 }
+        draft_with_llm: { type: boolean, default: false, description: Ask spark-brief-draft for a first draft }
+        funded: { type: boolean }
+        requested_amount: { type: [number, 'null'] }
+        value_split: { type: [object, 'null'], additionalProperties: { type: number } }
+        start_date: { type: string, format: date }
+    Spark:
+      type: object
+      required: [id, instance, place_id, sector, duration_days, status, funded]
+      properties:
+        id: { type: string }
+        instance: { type: string }
+        place_id: { type: string }
+        sector: { type: string }
+        duration_days: { type: integer }
+        title: { type: string }
+        brief: { type: string }
+        status: { $ref: '#/components/schemas/SparkStatus' }
+        funded: { type: boolean }
+        requested_amount: { type: [number, 'null'] }
+        currency: { type: string }
+        value_split: { type: [object, 'null'], additionalProperties: { type: number } }
+        split_locked_at: { type: [string, 'null'], format: date-time }
+        steward_approved_at: { type: [string, 'null'], format: date-time }
+        sprint_cycle_id: { type: [string, 'null'], description: The existing sprint cycle backing this Spark }
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { $ref: '#/components/schemas/RoleLabel' }
+              person_id: { type: string }
+              status: { type: string, enum: [invited, accepted, declined] }
+        created_at: { type: string, format: date-time }
+
+    DrivingSignal:
+      type: object
+      required: [evidence_id, type, basis, points]
+      properties:
+        evidence_id: { type: string }
+        type: { type: string }
+        basis: { type: string, enum: [verified, claimed] }
+        points: { type: number }
+    MemberExplanation:
+      type: object
+      required: [person_id, role, axis, cluster, verified_score, claimed_score, match_score, confidence, components, trust_drivers, fit_drivers, notes]
+      properties:
+        person_id: { type: string }
+        role: { $ref: '#/components/schemas/RoleLabel' }
+        axis: { $ref: '#/components/schemas/Axis' }
+        cluster: { type: string }
+        verified_score: { type: number }
+        claimed_score: { type: number, description: Never verified }
+        match_score: { type: number }
+        confidence: { type: number }
+        components:
+          type: object
+          properties:
+            fit: { type: number }
+            similarity: { type: number }
+            trust: { type: number }
+            availability: { type: number }
+        trust_drivers: { type: array, items: { $ref: '#/components/schemas/DrivingSignal' }, description: Verified evidence only }
+        fit_drivers: { type: array, items: { $ref: '#/components/schemas/DrivingSignal' }, description: 'Claimed signals, labelled as such' }
+        notes: { type: array, items: { type: string } }
+    TrioProposal:
+      type: object
+      required: [rank, score, diversity, distinct_clusters, members]
+      properties:
+        rank: { type: integer }
+        score: { type: number }
+        diversity: { type: number }
+        distinct_clusters: { type: integer }
+        members: { type: array, minItems: 3, maxItems: 3, items: { $ref: '#/components/schemas/MemberExplanation' } }
+    MatchResult:
+      type: object
+      required: [spark_id, trios, roles_without_candidate, excluded]
+      properties:
+        spark_id: { type: string }
+        trios: { type: array, items: { $ref: '#/components/schemas/TrioProposal' } }
+        roles_without_candidate: { type: array, items: { $ref: '#/components/schemas/Axis' } }
+        excluded: { type: object, additionalProperties: { type: integer } }
+
+    InstanceConfigDoc:
+      type: object
+      required: [instance, version, effective, overrides]
+      properties:
+        instance: { type: string }
+        version: { type: integer }
+        effective: { type: object, description: Base config with overrides merged (pal-core ResolvedConfig) }
+        overrides: { type: object }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+
+    FairnessGroupGap:
+      type: object
+      required: [group, median_gap, flagged]
+      properties:
+        group: { type: string }
+        low_n: { $ref: '#/components/schemas/BandedCount' }
+        high_n: { $ref: '#/components/schemas/BandedCount' }
+        median_low: { type: [number, 'null'] }
+        median_high: { type: [number, 'null'] }
+        median_gap: { type: [number, 'null'], description: Null when either group is under k_min }
+        flagged: { type: boolean }
+    FairnessReport:
+      type: object
+      required: [generated_at, model_version, threshold, footprint, flags]
+      properties:
+        generated_at: { type: string, format: date-time }
+        model_version: { type: string }
+        dataset: { type: string, enum: [synthetic, live] }
+        threshold: { type: number }
+        footprint:
+          type: object
+          properties:
+            overall: { $ref: '#/components/schemas/FairnessGroupGap' }
+            by_place: { type: array, items: { $ref: '#/components/schemas/FairnessGroupGap' } }
+        gender:
+          type: array
+          description: By optional self-reported gender only (never inferred)
+          items: { $ref: '#/components/schemas/FairnessGroupGap' }
+        flags: { type: array, items: { type: string } }
+        metrics: { type: object, description: 'Calibration, precision@k, completion lift, map stability' }
+
+    AccessLogEntry:
+      type: object
+      required: [id, viewer_id, viewer_role, subject_person_id, resource, purpose, at]
+      properties:
+        id: { type: string }
+        viewer_id: { type: string }
+        viewer_role: { type: string, enum: [steward, admin, service, app] }
+        subject_person_id: { type: string }
+        resource: { type: string }
+        purpose: { type: string }
+        at: { type: string, format: date-time }

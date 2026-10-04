@@ -1,0 +1,72 @@
+# PAL Engine configuration. Every tunable lives here; nothing about a place is hardcoded.
+# Any top-level section (except `instances`) can be overridden per instance via `instances[].overrides`.
+# Validated by packages/pal-core/src/config.ts (validateConfig). Served/edited via GET/PUT /admin/config.
+
+model_version: "pal-core@0.1.0"   # stamped on every profile; bump on any scoring change
+
+scoring:
+  half_life_months: 18            # same as civic_score
+  points_per_unit: 10             # ten full-strength verified events reach 100
+  claimed_cap_per_axis: 25
+  claimed_points_per_item: 5
+  claimed_match_weight: 0.4       # matching uses V + 0.4*C
+  verification_multiplier: { unverified: 0.0, verified: 1.0, corroborated: 1.25 }
+  evidence_weights:               # axis -> evidence_type -> weight
+    capital:   { pool_contribution: 1.0, funded_status: 1.0, sprint_commitment_paid: 0.8, facility_listing_verified: 0.6 }
+    vision:    { referral_active: 0.7, event_convened_verified: 0.8, content_engaged_by_verified: 0.4 }
+    execution: { sprint_closed_verified: 1.0, eco_event_corroborated: 0.6, training_delivered_verified: 0.8, team_led: 0.7 }
+
+roles:
+  role_threshold: 30
+  multi_role_ratio: 0.8
+
+states:
+  rising_delta_90d: 5
+  established_min: 20
+  dormant_below: 10
+  dormant_if_peak_at_least: 20
+
+confidence:
+  min_for_map_count: 0.4
+
+privacy:
+  k_min: 10
+  purge_days: 30
+
+readiness_targets:                # people per role needed for readiness 1.0; PLACEHOLDERS, tune after pilot
+  territorial_urban: { partner: 5, ambassador: 10, leader: 8 }
+  territorial_rural: { partner: 3, ambassador: 6,  leader: 5 }
+
+matching:
+  weights: { fit: 0.35, trust: 0.25, availability: 0.20, diversity: 0.20 }
+  max_trios: 3
+  min_distinct_clusters: 2
+  candidates_per_role: 15         # shortlist size per role before trio enumeration (DECISIONS D-011)
+
+extraction:
+  validated_languages: [en]       # languages that passed the eval/ language gate (DECISIONS D-007)
+  unvalidated_language_weight: 0.5
+  max_value_length: 160
+
+sparks:
+  durations_days: [7, 14, 30]
+  funding_cap: null               # MUST be set per instance before any funded Spark opens
+  value_split_defaults: null      # MUST be set per instance; unfunded Sparks allowed without it
+  min_active_verifiers: 1
+
+fairness:
+  max_median_gap: 15
+
+ml:                               # Stage B graph gate and Stage C switch-on threshold (ml/*.py)
+  graph_min_nodes: 30             # connected graph large enough to show clusters
+  graph_min_communities: 2
+  graph_min_closed_verified_sparks: 1
+  max_brokers: 10
+  stage_c_min_closed_sparks: 150  # spec: GNN only after 150-200 closed Sparks in a city
+
+sectors: [agriculture, health, education, finance, energy, waste_climate]
+levers: [energy, education, media, data, design, digital]
+
+instances:
+  - { id: lagos, country: NG, place_type: lga, currency: NGN, languages: [en, pcm, yo], regulator: NDPC }
+  - { id: kenya, country: KE, place_type: county, currency: KES, languages: [en, sw], regulator: ODPC }

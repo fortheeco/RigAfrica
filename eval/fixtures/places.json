@@ -1,0 +1,27 @@
+{
+  "_note": "Real place names as fixtures only (spec §6). People are always synthetic. Instance ids must match config/pal.config.yaml.",
+  "places": [
+    { "id": "ng-la-ikeja", "instance_id": "lagos", "name": "Ikeja", "place_type": "lga", "target_profile": "territorial_urban", "parent_id": null },
+    { "id": "ng-la-surulere", "instance_id": "lagos", "name": "Surulere", "place_type": "lga", "target_profile": "territorial_urban", "parent_id": null },
+    { "id": "ng-la-alimosho", "instance_id": "lagos", "name": "Alimosho", "place_type": "lga", "target_profile": "territorial_urban", "parent_id": null },
+    { "id": "ng-la-eti-osa", "instance_id": "lagos", "name": "Eti-Osa", "place_type": "lga", "target_profile": "territorial_urban", "parent_id": null },
+    { "id": "ke-nbi-westlands", "instance_id": "kenya", "name": "Westlands", "place_type": "sub_county", "target_profile": "territorial_urban", "parent_id": "ke-nairobi" },
+    { "id": "ke-nbi-kasarani", "instance_id": "kenya", "name": "Kasarani", "place_type": "sub_county", "target_profile": "territorial_urban", "parent_id": "ke-nairobi" },
+    { "id": "ke-nbi-embakasi-east", "instance_id": "kenya", "name": "Embakasi East", "place_type": "sub_county", "target_profile": "territorial_urban", "parent_id": "ke-nairobi" },
+    { "id": "ke-nbi-langata", "instance_id": "kenya", "name": "Lang'ata", "place_type": "sub_county", "target_profile": "territorial_urban", "parent_id": "ke-nairobi" },
+    { "id": "ke-nbi-dagoretti-north", "instance_id": "kenya", "name": "Dagoretti North", "place_type": "sub_county", "target_profile": "territorial_urban", "parent_id": "ke-nairobi" },
+    { "id": "ke-kisumu", "instance_id": "kenya", "name": "Kisumu", "place_type": "county", "target_profile": "territorial_urban", "parent_id": null },
+    { "id": "ke-nakuru", "instance_id": "kenya", "name": "Nakuru", "place_type": "county", "target_profile": "territorial_rural", "parent_id": null }
+  ],
+  "parents": [
+    { "id": "ke-nairobi", "instance_id": "kenya", "name": "Nairobi", "place_type": "county", "target_profile": "territorial_urban", "parent_id": null }
+  ],
+  "sector_vocabulary": {
+    "agriculture": ["irrigation", "smallholder", "seed", "harvest", "cooperative", "market", "storage", "soil"],
+    "health": ["clinic", "outreach", "sanitation", "nutrition", "screening", "pharmacy", "maternal", "water"],
+    "education": ["school", "tutoring", "literacy", "teachers", "library", "stem", "bootcamp", "scholarship"],
+    "finance": ["savings", "microloan", "esusu", "chama", "bookkeeping", "mobile money", "credit", "insurance"],
+    "energy": ["solar", "minigrid", "cookstove", "battery", "metering", "biogas", "installer", "inverter"],
+    "waste_climate": ["recycling", "plastic", "composting", "drainage", "flood", "tree planting", "upcycling", "cleanup"]
+  }
+}
